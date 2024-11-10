@@ -13,7 +13,6 @@ export function UserDetailsPage() {
     const [isLoading, setIsLoading] = useState<boolean>(true)
     const [error, setError] = useState<ErrorType | undefined>(undefined)
 
-    const navigate = useNavigate()
 
     const fetchUser = async () => {
         setIsLoading(true);

@@ -83,7 +83,7 @@ export function HomePage() {
                                 )}
                     </tbody>
                 </table>
-                <Pagination page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} hasNextPage={hasNextPage} />
+                <Pagination page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} hasNextPage={hasNextPage} isLoading={isLoading} />
             </main>
         </>
     )
