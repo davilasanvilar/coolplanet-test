@@ -1,57 +1,104 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ErrorType, User } from '../types/types';
+import { ErrorType, Page, User } from '../types/types';
 import { api } from '../api/api';
 import { LoadingIndicator } from '../components/LoadingIndicator';
 import { Pagination } from '../components/Pagination';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { ErrorIndicator } from '../components/ErrorIndicator';
+import { assign, fromPromise, setup } from 'xstate';
+import { useMachine } from '@xstate/react';
+
+
+
+const fetchUsers = async (page: number, pageSize: number): Promise<Page<User>> => {
+    try {
+        const usersPage = await api.findUsers(page, pageSize);
+        await new Promise((resolve) => setTimeout(() => {
+            resolve('')
+        }, 500)
+        )
+        return usersPage;
+    } catch (error) {
+        throw error;
+    }
+}
+
+interface FetchUsersContext {
+    users: User[];
+    error: ErrorType | undefined;
+    page: number;
+    pageSize: number;
+    hasNextPage: boolean;
+}
+
+const fetchUsersMachine = setup({
+    types: {
+        context: {} as FetchUsersContext
+    },
+    actors: {
+        fetchUsers: fromPromise<Page<User>, { page: number, pageSize: number }>(async ({input}) => {
+            return await fetchUsers(input.page, input.pageSize);
+        })
+    }
+}).createMachine({
+    id: 'fetchUsers',
+    initial: 'loading',
+    context: {
+        users: [],
+        error: undefined,
+        page: 1,
+        pageSize: 10,
+        hasNextPage: false,
+    },
+
+    states: {
+        loading: {
+            invoke: {
+                id: 'getUsers',
+                src: 'fetchUsers',
+                input: ({context}) => ({
+                    page: context.page,
+                    pageSize: context.pageSize
+                }),
+                onDone: {
+                    actions: [
+                        assign({ users: ({ event }) => event.output.data }),
+                        assign({ hasNextPage: ({ event }) => event.output.hasNext }),
+                    ],
+                    target: 'success'
+                },
+                onError: {
+                    actions: [
+                        assign({ error: 'INTERNAL_ERROR' }),
+                    ],
+                    target: 'error',
+                }
+            }
+        },
+        error: {
+        },
+        success: {
+        },
+    },
+    on: {
+        FETCH: '.loading',
+        SET_PAGE: {
+            actions: assign({ page: ({ event }) => event.page }),
+            target: '.loading'
+        },
+        SET_PAGE_SIZE: {
+            actions: assign({ pageSize: ({ event }) => event.pageSize, page: 1 }),
+            target: '.loading'
+        }
+    }
+});
 
 export function HomePage() {
 
-    const [users, setUsers] = useState<User[]>([]);
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(10);
-    const [hasNextPage, setHasNextPage] = useState(false);
-    const [error, setError] = useState<ErrorType | undefined>(undefined);
 
-    const firstRender = useRef(true)
     const navigate = useNavigate()
 
-
-    const [isLoading, setIsLoading] = useState<boolean>(false)
-
-    const fetchUsers = async () => {
-        setIsLoading(true);
-        try {
-            const usersPage = await api.findUsers(page, pageSize);
-            await new Promise((resolve) => setTimeout(() => {
-                resolve('')
-            }, 500)
-            )
-            setUsers(usersPage.data);
-            setHasNextPage(usersPage.hasNext);
-        } catch (error) {
-            setError('INTERNAL_ERROR');
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        fetchUsers();
-    }, [page])
-
-    useEffect(() => {
-        if (firstRender.current) {
-            firstRender.current = false;
-            return;
-        }
-        setPage(1);
-        fetchUsers();
-    }, [pageSize])
-
-
+    const [fetchState, send] = useMachine(fetchUsersMachine);
 
     return (
         <>
@@ -65,17 +112,17 @@ export function HomePage() {
                         </tr>
                     </thead>
                     <tbody>
-                        {isLoading ?
+                        {fetchState.matches('loading') ?
                             <tr>
                                 <td colSpan={2}><LoadingIndicator /></td>
                             </tr> :
-                            error ?
+                            fetchState.matches('error') ?
                                 <tr>
-                                    <td colSpan={2}> <ErrorIndicator type={error} />
+                                    <td colSpan={2}> <ErrorIndicator type={fetchState.context.error!} />
                                     </td>
                                 </tr>
                                 :
-                                users.map((user) =>
+                                fetchState.context.users.map((user) =>
                                     <tr className='selectable-row' key={user.id} onClick={() => navigate(`/users/${user.id}`)}>
                                         <td>{user.first_name}</td>
                                         <td>{user.last_name}</td>
@@ -83,7 +130,13 @@ export function HomePage() {
                                 )}
                     </tbody>
                 </table>
-                <Pagination page={page} setPage={setPage} pageSize={pageSize} setPageSize={setPageSize} hasNextPage={hasNextPage} />
+                <Pagination page={fetchState.context.page}
+                    setPage={(page: number) => send({ type: 'SET_PAGE', page })}
+                    pageSize={fetchState.context.pageSize}
+                    setPageSize={(pageSize: number) =>
+                        send({ type: 'SET_PAGE_SIZE', pageSize })}
+                    hasNextPage={fetchState.context.hasNextPage}
+                    isLoading={fetchState.matches('loading')} />
             </main>
         </>
     )
